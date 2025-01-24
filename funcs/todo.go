@@ -8,8 +8,8 @@ import (
 )
 
 // 注册 Todo 路由
-func RegisterTodoRoutes(r *gin.Engine) {
-	todoGroup := r.Group("/todos")
+func RegisterTodoRoutes(routerGroup *gin.RouterGroup) {
+	todoGroup := routerGroup.Group("/todos")
 	{
 		todoGroup.POST("/", CreateTodo)      // 新增任务
 		todoGroup.GET("/", GetTodos)         // 获取所有任务
@@ -26,6 +26,14 @@ func CreateTodo(c *gin.Context) {
 		return
 	}
 
+	// 从上下文获取用户 ID
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	todo.UserID = userID.(int)
+
 	if err := models.DB.Create(&todo).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create todo"})
 		return
@@ -37,7 +45,16 @@ func CreateTodo(c *gin.Context) {
 // 获取所有任务
 func GetTodos(c *gin.Context) {
 	var todos []models.Todo
-	if err := models.DB.Find(&todos).Error; err != nil {
+
+	// 从上下文获取用户 ID
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	// 查询当前用户的任务
+	if err := models.DB.Where("user_id = ?", userID).Find(&todos).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch todos"})
 		return
 	}
@@ -53,6 +70,13 @@ func UpdateTodo(c *gin.Context) {
 	// 查找任务
 	if err := models.DB.First(&todo, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Todo not found"})
+		return
+	}
+
+	// 检查任务是否属于当前用户
+	userID, exists := c.Get("userID")
+	if !exists || todo.UserID != userID.(int) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not authorized to update this todo"})
 		return
 	}
 
@@ -74,7 +98,23 @@ func UpdateTodo(c *gin.Context) {
 // 删除任务
 func DeleteTodo(c *gin.Context) {
 	id := c.Param("id")
-	if err := models.DB.Delete(&models.Todo{}, id).Error; err != nil {
+	var todo models.Todo
+
+	// 查找任务
+	if err := models.DB.First(&todo, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Todo not found"})
+		return
+	}
+
+	// 检查任务是否属于当前用户
+	userID, exists := c.Get("userID")
+	if !exists || todo.UserID != userID.(int) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not authorized to delete this todo"})
+		return
+	}
+
+	// 删除任务
+	if err := models.DB.Delete(&todo).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete todo"})
 		return
 	}
